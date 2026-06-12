@@ -16,6 +16,8 @@ import PersonFinder from './components/PersonFinder';
 import VehicleTracker from './components/VehicleTracker';
 import AuditLogs from './components/AuditLogs';
 import SettingsPanel from './components/SettingsPanel';
+import FootageArchive from './components/FootageArchive';
+import UploadFootage from './components/UploadFootage';
 
 // Icons
 import { 
@@ -50,7 +52,7 @@ export default function App() {
   const [forgotPasswordView, setForgotPasswordView] = useState(false);
 
   // Active platform Navigation State
-  const [activeTab, setActiveTab] = useState<'home' | 'monitoring' | 'alerts' | 'chatbot' | 'person-finder' | 'vehicle-tracking' | 'audit-logs' | 'settings'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'monitoring' | 'alerts' | 'chatbot' | 'person-finder' | 'vehicle-tracking' | 'audit-logs' | 'settings' | 'archive' | 'upload-footage'>('home');
 
   // Master Data States
   const [cameras, setCameras] = useState<Camera[]>(INITIAL_CAMERAS);
@@ -97,11 +99,68 @@ export default function App() {
     });
   };
 
+  const handleAddDetectedVehicles = (detectedVehicles: any[]) => {
+    detectedVehicles.forEach((vehicle) => {
+      const rawPlate = vehicle.details?.licensePlate?.trim();
+      const normalizedPlate = rawPlate || `UPLOAD-${(vehicle.label || 'Vehicle').replace(/\s+/g, '')}-${(vehicle.details?.color || 'Unknown').replace(/\s+/g, '')}`;
+      const plateNumber = normalizedPlate.toUpperCase();
+      const vehicleType = vehicle.details?.type || 'Car';
+      const makeModel = vehicle.details?.makeModel || vehicle.label || 'Detected Vehicle';
+      const color = vehicle.details?.color || 'Unknown';
+
+      handleAddVehicle({
+        plateNumber,
+        owner: 'Undetermined / Uploaded Footage',
+        vehicleType,
+        makeModel,
+        color,
+        status: 'Monitored',
+        reportedReason: 'Detected from uploaded surveillance video analysis',
+        sequence: [
+          {
+            camera: 'Uploaded Footage',
+            timestamp: new Date().toISOString(),
+            speed: 0,
+            snapshotType: 'Front'
+          }
+        ]
+      });
+    });
+  };
+
+  const [stats, setStats] = useState({
+    totalRecordings: 0,
+    totalPeopleDetected: 3842,
+    totalVehiclesDetected: 1419,
+    totalPlatesDetected: 0,
+    totalFaceMatches: 0,
+    totalThreatAlerts: 1
+  });
+
+  const fetchStats = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/analytics');
+      if (res.ok) {
+        const data = await res.json();
+        setStats(data);
+      }
+    } catch (e) {
+      console.error("Error fetching analytics stats:", e);
+    }
+  };
+
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
     }, 1000);
-    return () => clearInterval(timer);
+
+    fetchStats();
+    const statsTimer = setInterval(fetchStats, 5000);
+
+    return () => {
+      clearInterval(timer);
+      clearInterval(statsTimer);
+    };
   }, []);
 
   // Login handler
@@ -142,15 +201,25 @@ export default function App() {
   };
 
   // Altering alert statuses
-  const handleAlertStatusUpdate = (alertId: string, status: any) => {
-    setAlerts(prev => prev.map(al => {
-      if (al.id === alertId) {
-        // Record state adjustment to auditor journal
-        addAuditLog(`Threat manual status shift to [${status.toUpperCase()}] for event: ${al.title}`, al.cameraName, 'Status Shift');
-        return { ...al, status };
+  const handleAlertStatusUpdate = async (alertId: string, status: any) => {
+    try {
+      const res = await fetch(`http://localhost:5000/api/alerts/${alertId}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      if (res.ok) {
+        setAlerts(prev => prev.map(al => {
+          if (al.id === alertId) {
+            addAuditLog(`Threat manual status shift to [${status.toUpperCase()}] for event: ${al.title}`, al.cameraName, 'Status Shift');
+            return { ...al, status };
+          }
+          return al;
+        }));
       }
-      return al;
-    }));
+    } catch (e) {
+      console.error("Error updating alert status:", e);
+    }
   };
 
   // Adjust camera state (Online/Offline/Warning)
@@ -368,6 +437,24 @@ export default function App() {
               <span>Surveillance Grid</span>
             </button>
 
+            {/* Footage Archive tab */}
+            <button
+              onClick={() => setActiveTab('archive')}
+              className={`flex items-center gap-2.5 px-3 py-2 text-xs font-bold rounded-lg transition select-none ${activeTab === 'archive' ? 'bg-cyan-950/40 border border-cyan-500/30 text-cyan-400' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'}`}
+            >
+              <Layers className="w-4 h-4 shrink-0" />
+              <span>Footage Archive</span>
+            </button>
+
+            {/* Upload Video tab */}
+            <button
+              onClick={() => setActiveTab('upload-footage')}
+              className={`flex items-center gap-2.5 px-3 py-2 text-xs font-bold rounded-lg transition select-none ${activeTab === 'upload-footage' ? 'bg-cyan-950/40 border border-cyan-500/30 text-cyan-400' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'}`}
+            >
+              <Cpu className="w-4 h-4 shrink-0" />
+              <span>Upload Video Analysis</span>
+            </button>
+
             {/* Threat Alerts Manager tab */}
             <button
               onClick={() => setActiveTab('alerts')}
@@ -451,62 +538,72 @@ export default function App() {
           {/* A. ROUTE: DASHBOARD HOME VIEW */}
           {activeTab === 'home' && (
             <div className="space-y-6 animate-fade-in" id="dashboard-home-wrapper">
-              
-              {/* Tactical Overview Counters Section */}
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                    {/* Tactical Overview Counters Section */}
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                 
-                {/* Total Surveillance Channels count */}
+                {/* Total Recordings */}
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between shadow-sm">
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-slate-500 font-semibold block uppercase">Surveillance Nodes</span>
-                    <strong className="text-xl sm:text-2xl font-display font-black text-white">{totalCameras}</strong>
+                  <div className="space-y-1 text-left">
+                    <span className="text-[10px] text-slate-500 font-semibold block uppercase">Total Recordings</span>
+                    <strong className="text-lg sm:text-xl font-display font-black text-white">{stats.totalRecordings}</strong>
                   </div>
-                  <div className="p-2.5 bg-slate-950 border border-slate-800 text-cyan-400 rounded-lg hidden sm:block">
-                    <Video className="w-5 h-5" />
+                  <div className="p-2 bg-slate-950 border border-slate-800 text-cyan-400 rounded-lg hidden sm:block">
+                    <Video className="w-4.5 h-4.5" />
                   </div>
                 </div>
 
-                {/* Active stream channels */}
+                {/* Total People Detected */}
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between shadow-sm">
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-slate-500 font-semibold block uppercase">Active Streams</span>
-                    <strong className="text-xl sm:text-2xl font-display font-black text-emerald-400">{activeCameras}</strong>
+                  <div className="space-y-1 text-left">
+                    <span className="text-[10px] text-slate-500 font-semibold block uppercase">People Detected</span>
+                    <strong className="text-lg sm:text-xl font-display font-black text-cyan-400">{stats.totalPeopleDetected}</strong>
                   </div>
-                  <div className="p-2.5 bg-slate-950 border border-slate-800 text-emerald-400 rounded-lg hidden sm:block">
-                    <UserCheck className="w-5 h-5 animate-pulse" />
+                  <div className="p-2 bg-slate-950 border border-slate-800 text-slate-400 rounded-lg hidden sm:block">
+                    <Users className="w-4.5 h-4.5" />
                   </div>
                 </div>
 
-                {/* Threat alarm indicators */}
+                {/* Total Vehicles Detected */}
                 <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between shadow-sm">
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-slate-500 font-semibold block uppercase">Active Alerts</span>
-                    <strong className="text-xl sm:text-2xl font-display font-black text-amber-500">{activeAlertsCount}</strong>
-                  </div>
-                  <div className="p-2.5 bg-slate-950 border border-slate-800 text-amber-400 rounded-lg hidden sm:block">
-                    <Bell className="w-5 h-5 animate-bounce" />
-                  </div>
-                </div>
-
-                {/* Pedestrian tracking counter */}
-                <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between shadow-sm">
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-slate-500 font-semibold block uppercase">People Logged Today</span>
-                    <strong className="text-xl sm:text-2xl font-display font-black text-white">{peopleDetectedTodayVal}</strong>
-                  </div>
-                  <div className="p-2.5 bg-slate-950 border border-slate-800 text-slate-400 rounded-lg hidden sm:block">
-                    <Users className="w-5 h-5" />
-                  </div>
-                </div>
-
-                {/* Vehicle tracking counter */}
-                <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between shadow-sm col-span-2 md:col-span-1">
-                  <div className="space-y-1">
+                  <div className="space-y-1 text-left">
                     <span className="text-[10px] text-slate-500 font-semibold block uppercase">Vehicles Catalogued</span>
-                    <strong className="text-xl sm:text-2xl font-display font-black text-white">{vehiclesDetectedTodayVal}</strong>
+                    <strong className="text-lg sm:text-xl font-display font-black text-emerald-400">{stats.totalVehiclesDetected}</strong>
                   </div>
-                  <div className="p-2.5 bg-slate-950 border border-slate-800 text-indigo-400 rounded-lg hidden sm:block">
-                    <Car className="w-5 h-5" />
+                  <div className="p-2 bg-slate-950 border border-slate-800 text-emerald-400 rounded-lg hidden sm:block">
+                    <Car className="w-4.5 h-4.5" />
+                  </div>
+                </div>
+
+                {/* Total Plates Detected */}
+                <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between shadow-sm">
+                  <div className="space-y-1 text-left">
+                    <span className="text-[10px] text-slate-500 font-semibold block uppercase">Plates Tracked</span>
+                    <strong className="text-lg sm:text-xl font-display font-black text-amber-500">{stats.totalPlatesDetected}</strong>
+                  </div>
+                  <div className="p-2 bg-slate-950 border border-slate-800 text-amber-400 rounded-lg hidden sm:block">
+                    <Car className="w-4.5 h-4.5" />
+                  </div>
+                </div>
+
+                {/* Total Face Matches */}
+                <div className="bg-slate-950/80 border border-cyan-500/20 p-4 rounded-xl flex items-center justify-between shadow-sm">
+                  <div className="space-y-1 text-left">
+                    <span className="text-[10px] text-slate-500 font-semibold block uppercase">Face Matches</span>
+                    <strong className="text-lg sm:text-xl font-display font-black text-indigo-400">{stats.totalFaceMatches}</strong>
+                  </div>
+                  <div className="p-2 bg-slate-950 border border-slate-800 text-indigo-400 rounded-lg hidden sm:block">
+                    <Cpu className="w-4.5 h-4.5" />
+                  </div>
+                </div>
+
+                {/* Total Threat Alerts */}
+                <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between shadow-sm">
+                  <div className="space-y-1 text-left">
+                    <span className="text-[10px] text-slate-500 font-semibold block uppercase">Threat Alerts</span>
+                    <strong className="text-lg sm:text-xl font-display font-black text-red-400">{stats.totalThreatAlerts}</strong>
+                  </div>
+                  <div className="p-2 bg-slate-950 border border-slate-800 text-red-400 rounded-lg hidden sm:block">
+                    <Bell className="w-4.5 h-4.5" />
                   </div>
                 </div>
               </div>
@@ -687,6 +784,16 @@ export default function App() {
               onSaveApiKey={handleSaveApiKey}
               onAddCommunityPartner={handleAddCommunityPartner}
             />
+          )}
+
+          {/* I. ROUTE: Footage Archive */}
+          {activeTab === 'archive' && (
+            <FootageArchive />
+          )}
+
+          {/* J. ROUTE: Upload Video Analysis */}
+          {activeTab === 'upload-footage' && (
+            <UploadFootage onDetectedVehicles={handleAddDetectedVehicles} />
           )}
 
         </main>

@@ -1,0 +1,51 @@
+{
+  "recordings": [],
+  "alerts": [
+    {
+      "id": "20cd8d29-2c19-4457-821a-739352c25e9d",
+      "category": "Intrusion",
+      "title": "Wanted Biometric Match Detected",
+      "description": "Visual matching query triggered target identification with 91.4% confidence.",
+      "location": "Operator Workstation Node",
+      "cameraName": "Laptop Webcam",
+      "timestamp": "2026-06-12T08:31:02.628Z",
+      "severity": "critical",
+      "status": "active",
+      "confidence": 91.4,
+      "suspectImage": "/uploads/d4439b6e-084a-4949-ad2e-fed2d0870b3c.PNG"
+    },
+    {
+      "id": "alert-initial-1",
+      "category": "Weapon",
+      "title": "Suspicious Weapon Brandished",
+      "description": "AI object classifier detected a rifle-like object near East Terminal.",
+      "location": "East Terminal Plaza",
+      "cameraName": "Laptop Dashcam",
+      "timestamp": "2026-06-12T05:40:22.015Z",
+      "severity": "critical",
+      "status": "active",
+      "confidence": 96.8
+    }
+  ],
+  "plates": [],
+  "analytics": {
+    "totalPeople": 120,
+    "totalVehicles": 4,
+    "totalPlates": 0,
+    "totalFaceMatches": 1,
+    "totalThreatAlerts": 1
+  },
+  "faces": [
+    {
+      "matchFound": true,
+      "confidence": 91.4,
+      "timestamp": "2026-06-12T08:31:02.628Z",
+      "cameraName": "Laptop Webcam",
+      "thumbnailFrame": "/uploads/d4439b6e-084a-4949-ad2e-fed2d0870b3c.PNG",
+      "details": {
+        "age": 24,
+        "gender": "Male"
+      }
+    }
+  ]
+}

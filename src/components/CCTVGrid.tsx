@@ -84,6 +84,35 @@ export default function CCTVGrid({
     weapons: Array<{ box_2d: number[]; label: string; details: any }>;
   } | null>(null);
 
+  // Recording State
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingSecondsRef = useRef(0);
+
+  const [threatPopup, setThreatPopup] = useState<{ weapon: string; confidence: number } | null>(null);
+
+  const triggerAudioAlert = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      oscillator.type = 'sawtooth';
+      oscillator.frequency.setValueAtTime(900, audioCtx.currentTime);
+      oscillator.frequency.linearRampToValueAtTime(300, audioCtx.currentTime + 0.5);
+      gainNode.gain.setValueAtTime(0.35, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.6);
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.6);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   // Filtered list
   const filteredCameras = cameras.filter(cam => 
     cam.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -106,6 +135,9 @@ export default function CCTVGrid({
       if (webcamStream) {
         webcamStream.getTracks().forEach(track => track.stop());
       }
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
     };
   }, [webcamStream]);
 
@@ -125,7 +157,88 @@ export default function CCTVGrid({
     }
   };
 
+  const startRecording = () => {
+    if (!webcamStream) return;
+    chunksRef.current = [];
+    setRecordingSeconds(0);
+    recordingSecondsRef.current = 0;
+    setIsRecording(true);
+
+    try {
+      const options = { mimeType: 'video/webm;codecs=vp9' };
+      let mediaRecorder;
+      try {
+        mediaRecorder = new MediaRecorder(webcamStream, options);
+      } catch (e) {
+        mediaRecorder = new MediaRecorder(webcamStream);
+      }
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          chunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+        const file = new File([blob], 'recording.webm', { type: 'video/webm' });
+
+        const mins = Math.floor(recordingSecondsRef.current / 60).toString().padStart(2, '0');
+        const secs = (recordingSecondsRef.current % 60).toString().padStart(2, '0');
+        const durationStr = `${mins}:${secs}`;
+
+        const formData = new FormData();
+        formData.append('video', file);
+        formData.append('cameraName', activeCamera ? activeCamera.name : 'Laptop Webcam');
+        formData.append('duration', durationStr);
+        formData.append('timestamp', new Date().toISOString());
+
+        try {
+          const res = await fetch('/api/record-webcam', {
+            method: 'POST',
+            body: formData
+          });
+          if (res.ok) {
+            alert(`Webcam footage recorded and archived successfully! Duration: ${durationStr}`);
+          } else {
+            console.error("Failed to archive recording");
+          }
+        } catch (err) {
+          console.error("Error uploading recording:", err);
+        }
+      };
+
+      mediaRecorder.start(1000);
+
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => {
+          const next = prev + 1;
+          recordingSecondsRef.current = next;
+          return next;
+        });
+      }, 1000);
+
+    } catch (err) {
+      console.error("Error starting recording:", err);
+      setIsRecording(false);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
+    }
+  };
+
   const stopWebcam = () => {
+    if (isRecording) {
+      stopRecording();
+    }
     if (webcamStream) {
       webcamStream.getTracks().forEach(track => track.stop());
       setWebcamStream(null);
@@ -274,6 +387,14 @@ Provide output in JSON format matching the schema.`
         onUpdateCameraCounts(activeCamera.id, data.summary.peopleCount, data.summary.vehicleCount);
         
         if (data.summary.weaponCount > 0) {
+          triggerAudioAlert();
+          const weaponObj = data.weapons[0];
+          setThreatPopup({
+            weapon: weaponObj?.details?.type || "Weapon-like object",
+            confidence: 94
+          });
+          setTimeout(() => setThreatPopup(null), 4000);
+
           data.weapons.forEach((w: any, idx: number) => {
             onAddAlert({
               id: `alert-ai-weapon-${Date.now()}-${idx}`,
@@ -529,7 +650,14 @@ Provide output in JSON format matching the schema.`
                 <span className="bg-slate-950/80 border border-slate-800 text-slate-300 font-mono text-[9px] sm:text-xs px-1.5 py-0.5 rounded">
                   FPS: {cam.fps}
                 </span>
-                <span className="text-[9px] tracking-wider text-cyan-400/80 font-mono select-none hidden sm:inline">REC ● LIVE</span>
+                {isRecording ? (
+                  <span className="text-[9px] tracking-wider text-red-500 font-mono select-none flex items-center gap-1 font-bold animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+                    REC {Math.floor(recordingSeconds / 60).toString().padStart(2, '0')}:{(recordingSeconds % 60).toString().padStart(2, '0')}
+                  </span>
+                ) : (
+                  <span className="text-[9px] tracking-wider text-cyan-400/80 font-mono select-none hidden sm:inline">REC ● LIVE</span>
+                )}
               </div>
             </div>
 
@@ -869,12 +997,30 @@ Provide output in JSON format matching the schema.`
                   ) : null}
 
                   {webcamLinkedCamId === activeCamera.id ? (
-                    <button 
-                      onClick={stopWebcam}
-                      className="bg-amber-950 border border-amber-500 text-amber-400 hover:bg-amber-900/60 px-3 py-1.5 text-xs font-mono rounded font-semibold transition"
-                    >
-                      Disconnect Webcam
-                    </button>
+                    <>
+                      {isRecording ? (
+                        <button 
+                          onClick={stopRecording}
+                          className="bg-red-950 border border-red-500 text-red-400 hover:bg-red-900/60 px-3 py-1.5 text-xs font-mono rounded font-semibold transition flex items-center gap-1.5 animate-pulse shadow-md shadow-red-950/40"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                          Stop Recording ({Math.floor(recordingSeconds / 60).toString().padStart(2, '0')}:{(recordingSeconds % 60).toString().padStart(2, '0')})
+                        </button>
+                      ) : (
+                        <button 
+                          onClick={startRecording}
+                          className="bg-red-950 border border-red-500 text-red-400 hover:bg-red-900/60 px-3 py-1.5 text-xs font-mono rounded font-semibold transition flex items-center gap-1"
+                        >
+                          Start Recording
+                        </button>
+                      )}
+                      <button 
+                        onClick={stopWebcam}
+                        className="bg-amber-950 border border-amber-500 text-amber-400 hover:bg-amber-900/60 px-3 py-1.5 text-xs font-mono rounded font-semibold transition"
+                      >
+                        Disconnect Webcam
+                      </button>
+                    </>
                   ) : (
                     <button 
                       onClick={() => startWebcam(activeCamera.id)}
@@ -988,6 +1134,15 @@ Provide output in JSON format matching the schema.`
           </div>
         </div>
       </div>
+      {threatPopup && (
+        <div className="fixed top-24 left-1/2 transform -translate-x-1/2 bg-red-950 border-2 border-red-500 text-red-200 p-4 rounded-xl shadow-2xl flex items-center gap-3 z-50 animate-bounce">
+          <ShieldAlert className="w-8 h-8 text-red-500 animate-pulse" />
+          <div className="font-mono text-left">
+            <strong className="text-sm block tracking-widest text-red-400">CRITICAL WEAPON DETECTED</strong>
+            <span className="text-xs block mt-0.5">Classification: {threatPopup.weapon.toUpperCase()} | Confidence: {threatPopup.confidence}%</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

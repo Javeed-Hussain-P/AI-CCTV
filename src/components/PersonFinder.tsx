@@ -69,82 +69,55 @@ export default function PersonFinder({ persons, onAddPerson, geminiApiKey, onSea
     // Log audit query access
     onSearchLogged(searchReason, selectedSuspect?.lastSeenCamera || 'All Platform Nodes');
 
-    if (customFile && uploadedBase64 && geminiApiKey) {
+    if (customFile) {
       try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`, {
+        const fileInput = fileInputRef.current;
+        if (!fileInput || !fileInput.files || !fileInput.files[0]) {
+          alert('Please select a visual file to scan.');
+          setSearchStatus('idle');
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append('face', fileInput.files[0]);
+
+        const response = await fetch('http://localhost:5000/api/search-face', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  {
-                    text: `Analyze this portrait of a suspect. Extract the person's details: gender, clothing style/color, approximate age.
-Determine if they look suspicious or if they should be categorized as 'Wanted', 'Missing', 'Suspicious', or 'Visitor'.
-Provide a concise overall description of the person. Create a realistic code name (e.g. 'Subject X-ray', 'Subject Alpha-9') if not explicitly known.
-Provide output in JSON format matching the schema.`
-                  },
-                  {
-                    inlineData: {
-                      mimeType: 'image/jpeg',
-                      data: uploadedBase64
-                    }
-                  }
-                ]
-              }
-            ],
-            generationConfig: {
-              responseMimeType: 'application/json',
-              responseSchema: {
-                type: 'OBJECT',
-                properties: {
-                  name: { type: 'STRING' },
-                  description: { type: 'STRING', description: 'Detailed clothing, appearance description' },
-                  status: { type: 'STRING', description: "Must be one of: 'Wanted', 'Missing', 'Suspicious', 'Visitor'" },
-                  confidence: { type: 'NUMBER' }
-                },
-                required: ['name', 'description', 'status', 'confidence']
-              }
-            }
-          })
+          body: formData
         });
 
         if (!response.ok) {
-          const errText = await response.text();
-          throw new Error(`Gemini API Error: ${response.status} - ${errText}`);
+          throw new Error(`Server returned code ${response.status}`);
         }
 
-        const result = await response.json();
-        const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!textResponse) throw new Error("Empty response from Gemini Vision engine.");
-
-        const data = JSON.parse(textResponse);
+        const data = await response.json();
         
-        const newPerson: PersonRecord = {
-          id: `sub-ai-${Date.now()}`,
-          name: data.name || `Subject AI-${Math.floor(Math.random() * 1000)}`,
-          description: data.description,
-          confidence: data.confidence || 95.0,
-          lastSeenCamera: 'Laptop Dashcam',
-          lastSeenTime: new Date().toISOString(),
-          status: data.status || 'Suspicious',
-          trackHistory: [
-            { camera: 'Laptop Dashcam', timestamp: new Date().toISOString(), confidence: data.confidence || 95.0 }
-          ]
-        };
+        if (data.matchFound) {
+          const newPerson: PersonRecord = {
+            id: `sub-ai-${Date.now()}`,
+            name: data.name || `Subject AI-${Math.floor(Math.random() * 1000)}`,
+            description: `Wanted target matching visual query. Dom Gender: ${data.details?.gender || 'Unknown'}. Dom Age: ${data.details?.age || 'Unknown'}. Tracked on active network stream segment.`,
+            confidence: data.confidence || 95.0,
+            lastSeenCamera: data.cameraName || 'Laptop Webcam',
+            lastSeenTime: data.timestamp || new Date().toISOString(),
+            status: 'Wanted',
+            trackHistory: [
+              { camera: data.cameraName || 'Laptop Webcam', timestamp: data.timestamp || new Date().toISOString(), confidence: data.confidence || 95.0 }
+            ]
+          };
 
-        onAddPerson(newPerson);
-        setSelectedSuspect(newPerson);
-        setMatchingConfidence(newPerson.confidence);
-        setSearchStatus('results');
+          onAddPerson(newPerson);
+          setSelectedSuspect(newPerson);
+          setMatchingConfidence(newPerson.confidence);
+          setSearchStatus('results');
+        } else {
+          alert("No matching records found in recorded surveillance files.");
+          setSearchStatus('idle');
+        }
       } catch (err: any) {
         console.error(err);
-        alert(`AI Suspect Analysis Failed: ${err.message || err}. Falling back to default database simulation.`);
-        setTimeout(() => {
-          setSearchStatus('results');
-        }, scanSpeedMs);
+        alert(`Facial Search Failed: ${err.message || err}`);
+        setSearchStatus('idle');
       }
     } else {
       setTimeout(() => {

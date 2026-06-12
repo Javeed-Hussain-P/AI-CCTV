@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { VehicleRecord } from '../types';
 import { 
   Car, 
@@ -24,6 +24,26 @@ interface VehicleTrackerProps {
 }
 
 export default function VehicleTracker({ vehicles, onAddVehicle, geminiApiKey, onVehicleSearchLogged }: VehicleTrackerProps) {
+  const [dbPlates, setDbPlates] = useState<any[]>([]);
+
+  const fetchDbPlates = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/plates');
+      if (res.ok) {
+        const data = await res.json();
+        setDbPlates(data);
+      }
+    } catch (e) {
+      console.error("Error fetching plates database:", e);
+    }
+  };
+
+  useEffect(() => {
+    fetchDbPlates();
+    const interval = setInterval(fetchDbPlates, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   const [plateQuery, setPlateQuery] = useState('');
   const [activeRecord, setActiveRecord] = useState<VehicleRecord | null>(null);
   const [isSearching, setIsSearching] = useState(false);
@@ -414,6 +434,66 @@ Provide output in JSON format matching the schema.`
           No registry logs found matching: <span className="text-red-400">[{plateQuery}]</span> on active network streams.
         </div>
       )}
+      {/* 4. Active Plates Log Ledger Table */}
+      <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl space-y-4 shadow-md text-left mt-6">
+        <div className="border-b border-slate-800 pb-3 flex justify-between items-center">
+          <h4 className="text-white font-display font-semibold text-sm uppercase flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            Neural Plates Tracker Ledger ({dbPlates.length})
+          </h4>
+          <span className="text-[10px] text-slate-500 font-mono uppercase">Scanned Nodes Ledger</span>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs font-mono text-slate-300">
+            <thead>
+              <tr className="border-b border-slate-850 text-slate-500 uppercase tracking-widest text-[9px] font-bold">
+                <th className="py-3 px-4">Plate Number</th>
+                <th className="py-3 px-4">Timestamp</th>
+                <th className="py-3 px-4">Vehicle Class</th>
+                <th className="py-3 px-4">Feed Screenshot</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dbPlates.map((log) => (
+                <tr key={log.id} className="border-b border-slate-900 hover:bg-slate-950/40 transition">
+                  <td className="py-3 px-4">
+                    <span className="bg-emerald-950 border border-emerald-500/30 text-emerald-400 font-bold px-2 py-0.5 rounded text-xs">
+                      {log.plate}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4 text-slate-400">
+                    {new Date(log.timestamp).toLocaleString()}
+                  </td>
+                  <td className="py-3 px-4 text-slate-200">
+                    {log.vehicleType || 'Car'}
+                  </td>
+                  <td className="py-2 px-4">
+                    {log.screenshot ? (
+                      <div className="w-14 aspect-video rounded overflow-hidden border border-slate-800 bg-slate-950 flex items-center justify-center">
+                        <img 
+                          src={log.screenshot.startsWith('/uploads') ? `http://localhost:5000${log.screenshot}` : log.screenshot} 
+                          alt="LPR crop" 
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    ) : (
+                      <span className="text-slate-600 text-[10px] uppercase">N/A</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {dbPlates.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="py-10 text-center text-slate-600">
+                    No license plates scanned in active registry records.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

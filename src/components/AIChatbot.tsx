@@ -93,6 +93,34 @@ Rules for your response:
         reply = `Analytical scanning suggests all danger thresholds are clear, and first responders have resolved all previous alarms. No active hostile targets flagged.`;
       }
     } 
+    else if (normalized.includes('red') || normalized.includes('blue') || normalized.includes('black') || normalized.includes('white') || normalized.includes('silver') || normalized.includes('grey') || normalized.includes('gray') || normalized.includes('green') || normalized.includes('yellow') || normalized.includes('brown') || normalized.includes('orange')) {
+      const colorMatches = vehicles.filter(v => {
+        const vehicleColor = v.color?.toLowerCase() || '';
+        return vehicleColor.split(' ').some(part => part && normalized.includes(part));
+      });
+      const typeMatches = vehicles.filter(v => {
+        if (normalized.includes('car')) return v.vehicleType.toLowerCase().includes('car') || v.makeModel.toLowerCase().includes('car');
+        if (normalized.includes('truck')) return v.vehicleType.toLowerCase().includes('truck');
+        if (normalized.includes('bus')) return v.vehicleType.toLowerCase().includes('bus');
+        if (normalized.includes('bike') || normalized.includes('motorcycle')) return v.vehicleType.toLowerCase().includes('bike') || v.vehicleType.toLowerCase().includes('motorcycle');
+        return true;
+      });
+      const matches = typeMatches.filter(v => colorMatches.includes(v));
+      if (matches.length > 0) {
+        reply = `I located ${matches.length} vehicle${matches.length > 1 ? 's' : ''} matching that description in the current registry.`;
+        if (normalized.includes('car')) {
+          reply += ` Example: ${matches[0].color} ${matches[0].makeModel} with plate ${matches[0].plateNumber}.`;
+        }
+        type = 'vehicle-timeline';
+        payload = matches[0];
+      } else if (colorMatches.length > 0) {
+        reply = `I found ${colorMatches.length} ${normalized.includes('car') ? 'car' : 'vehicle'} matches by color in the registry. The top result is ${colorMatches[0].color} ${colorMatches[0].makeModel} [${colorMatches[0].plateNumber}].`;
+        type = 'vehicle-timeline';
+        payload = colorMatches[0];
+      } else {
+        reply = `I could not find any vehicles matching that color/type in the current surveillance registry. Please verify the query or upload footage containing the target scene.`;
+      }
+    }
     else if (normalized.includes('track') || normalized.includes('ka01ab1234') || normalized.includes('vehicle')) {
       const targetedPlate = 'KA01AB1234';
       const carMatch = vehicles.find(v => v.plateNumber === targetedPlate);
@@ -132,7 +160,8 @@ Rules for your response:
       text,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
-    setMessages(prev => [...prev, userMessage]);
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
     setUserInput('');
     setTyping(true);
 
@@ -146,7 +175,7 @@ Rules for your response:
           }
         ];
 
-        messages.slice(-6).forEach(m => {
+        updatedMessages.slice(-6).forEach(m => {
           apiMessages.push({
             role: m.sender === 'user' ? 'user' : 'model',
             parts: [{ text: m.text }]
